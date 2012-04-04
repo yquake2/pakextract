@@ -1,0 +1,42 @@
+                      pakextract
+                      ----------
+
+pakextract is a small tool to extract the contents of 
+a Quake II pak file into the current directory. Usage:
+ 
+ ./pakextract /path/to/pakfile.pak
+
+Only Quake II paks are supported. Other pak formats may
+work but it's untested and unsupported.
+
+-------------------------------------------------------
+
+            The Quake II Pak File Format
+            ----------------------------
+
+A Quake II pak file consists of 3 parts:
+ - Header
+ - Directory
+ - Data
+
+The header is written right after the start
+of the file and consists of 3 parts in the
+following order:
+ - A 4 byte identification string "PACK" (in ASCII)
+ - A 4 byte integer value defining the offset to the
+   directory in bytes
+ - A 4 byte iteger giving the length of the directory
+   in bytes. Since every directory entry is 64 bytes 
+   long this value modulo 64 must be 0: 
+     (dir_length % 64) == 0;
+
+The directory can be anywere in the file but most times
+it's written to the end. In consists of datablocks, 
+written one after the other without any space between
+them. A directory entry is 64 bytes long has entries
+in the following order:
+ - A 56 byte file name (in ASCII)
+ - A 4 byte value defining the position if the file
+   as an offset in bytes to the start of the pak file.
+ - A 4 byte integer giving the length of the file
+   in bytes.
