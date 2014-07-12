@@ -4,7 +4,7 @@
 pakextract is a small tool to extract the contents of 
 a Quake II pak file into the current directory. Usage:
  
- ./pakextract /path/to/pakfile.pak
+ ./pakextract [ -o output_directory ] /path/to/pakfile.pak
 
 Only Quake II paks are supported. Other pak formats may
 work but it's untested and unsupported.

@@ -27,6 +27,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <getopt.h>
 #include <sys/stat.h>
 
 /* Holds the pak header */
@@ -197,6 +199,13 @@ extract_files(FILE *fd, directory *d)
 	}
 }
 
+void
+print_usage(const char *prog_path)
+{
+	fprintf(stderr, "Usage: %s [-o dir] pakfile\n", prog_path);
+	exit(-1);
+}
+
 /*
  * A small programm to extract a Quake II pak file.
  * The pak file is given as the first an only 
@@ -207,20 +216,50 @@ main(int argc, char *argv[])
 {
 	directory *d;
 	FILE *fd;
+	int opt;
+	int err;
+	const char *out_dir = NULL;
+	const char *prog_path = argv[0];
+
+	/* Scan command line args */
+	while ((opt = getopt(argc, argv, "o:")) != -1)
+	{
+		switch(opt)
+		{
+		/* set output directory */
+		case 'o':
+			out_dir = optarg;
+			break;
+		default:
+			print_usage(prog_path);
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
 
 	/* Correct usage? */
-	if (argc != 2)
+	if (argc != 1)
 	{
-		fprintf(stderr, "Usage: %s pakfile\n", argv[0]);
-		exit(-1);
+		print_usage(prog_path);
 	}
 
 	/* Open the pak file */
-	fd = fopen(argv[1], "r");
+	fd = fopen(argv[0], "r");
 	if (fd == NULL)
 	{
 		perror("Could not open the pak file");
 		exit(-1);
+	}
+
+	/* go to output directory */
+	if (out_dir)
+	{
+		if ((err = chdir(out_dir)) != 0)
+		{
+			perror("Could not cd to output dir");
+			exit(-1);
+		}
 	}
 
 	/* Read the header */
