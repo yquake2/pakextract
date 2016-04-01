@@ -1,10 +1,10 @@
 # The compiler
-CC := gcc
+CC := clang
 
 # ----------
 
 # Base CFLAGS
-CFLAGS := -O2 -Wall -ansi -pedantic
+CFLAGS := -O2 -Wall -std=c11 -pedantic -DDAIKATANA
 
 # ----------
 
