@@ -29,6 +29,14 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include <assert.h>
+
+#ifdef DAIKATANA
+#define HDR_DIR_LEN 72
+#else
+#define HDR_DIR_LEN 64
+#endif
+
 /* Holds the pak header */
 struct
 {
@@ -42,7 +50,11 @@ struct directory_s
 {
 	char file_name[56];
 	int file_pos;
-	int file_length;
+	int file_length; // in case of is_compressed: size after decompression
+#ifdef DAIKATANA
+	int compressed_length; // size of compressed data in the pak
+	int is_compressed; // 0: uncompressed, else compressed
+#endif
 	struct directory_s *next;
 };
 typedef struct directory_s directory;
@@ -108,7 +120,7 @@ read_header(FILE *fd)
 		return -1;
 	}
 
-	if ((header.dir_length % 64) != 0)
+	if ((header.dir_length % HDR_DIR_LEN) != 0)
 	{
 		fprintf(stderr, "Corrupt pak file\n");
 		return -1;
@@ -126,7 +138,7 @@ read_header(FILE *fd)
  *         holding the pak to be read
  */ 
 directory *
-read_directory(FILE *fd)
+read_directory(FILE *fd, int listOnly)
 {
 	int i;
 	directory *head, *cur;
@@ -136,21 +148,71 @@ read_directory(FILE *fd)
 	/* Navigate to the directory */
 	fseek(fd, header.dir_offset, SEEK_SET);
 
-	for (i = 0; i < (header.dir_length / 64); i++)
+	for (i = 0; i < (header.dir_length / HDR_DIR_LEN); i++)
 	{
 		cur = malloc(sizeof(directory));
 
-		if (fread(cur, sizeof(directory) - sizeof(directory *), 1, fd) != 1)
+		if (fread(cur, HDR_DIR_LEN, 1, fd) != 1)
 		{
 			perror("Could not read directory entry");
 			return NULL;
 		}
 
+		if(listOnly)
+		{
+			printf("%s (%d bytes", cur->file_name, cur->file_length);
+		#ifdef DAIKATANA
+			if(cur->is_compressed) printf(", %d compressed", cur->compressed_length);
+		#endif
+			printf(")\n");
+		}
+		
 		cur->next = head;
 		head = cur;
 	}
 
 	return head;
+}
+
+#ifdef DAIKATANA
+
+static void extract_compressed(FILE* in, directory *d)
+{
+
+	// TODO: implement according to https://gist.github.com/DanielGibson/8bde6241c93e5efe8b75e5e00d0b9858
+	fprintf(stderr, "## TODO: Implement support for compressed files to extract '%s'!!\n", d->file_name);
+
+}
+#endif
+
+static void extract_raw(FILE* in, directory *d)
+{
+	FILE* out = fopen(d->file_name, "w");
+	if (out == NULL)
+	{
+		perror("Could open the outputfile");
+		return;
+	}
+	
+	// just copy the data from the .pak to the output file (in chunks for speed)
+	int bytes_left = d->file_length;
+	char buf[2048];
+	
+	fseek(in, d->file_pos, SEEK_SET);
+	
+	while(bytes_left >= sizeof(buf))
+	{
+		fread(buf, sizeof(buf), 1, in);
+		fwrite(buf, sizeof(buf), 1, out);
+		bytes_left -= sizeof(buf);
+	}
+	if(bytes_left > 0)
+	{
+		fread(buf, bytes_left, 1, in);
+		fwrite(buf, bytes_left, 1, out);
+	}
+
+	fclose(out);
 }
 
 /* 
@@ -165,36 +227,38 @@ read_directory(FILE *fd)
 void
 extract_files(FILE *fd, directory *d)
 {
-	char b;
 	directory *old_d;
-	FILE *out;
-	int i;
 
 	while (d != NULL)
 	{
 	    mktree(d->file_name);
 
-        out = fopen(d->file_name, "w");
-		if (out == NULL)
+#ifdef DAIKATANA
+		if(d->is_compressed)
 		{
-			perror("Could open the outputfile");
-			return;
+			extract_compressed(fd, d);
 		}
-
-		fseek(fd, d->file_pos, SEEK_SET);
-
-		for (i = 0; i < d->file_length; i++)
+		else
+#endif
 		{
-			fread(&b, sizeof(char), 1, fd);
-			fwrite(&b, sizeof(char), 1, out);
+			extract_raw(fd, d);
 		}
-
-		fclose(out);
 
 		old_d = d;
 		d = d->next;
 		free(old_d);
 	}
+}
+
+static void printUsage(const char* argv0)
+{
+#ifdef DAIKATANA
+	fprintf(stderr, "Extractor for Daikatana .pak files\n");
+#else
+	fprintf(stderr, "Extractor for Quake/Quake2 (and compatible) .pak files\n");
+#endif
+	fprintf(stderr, "Usage: %s [-l] pakfile\n", argv0);
+	fprintf(stderr, "       -l don't extract, just list contents\n");
 }
 
 /*
@@ -209,14 +273,28 @@ main(int argc, char *argv[])
 	FILE *fd;
 
 	/* Correct usage? */
-	if (argc != 2)
+	if (argc < 2)
 	{
-		fprintf(stderr, "Usage: %s pakfile\n", argv[0]);
+		printUsage(argv[0]);
 		exit(-1);
 	}
 
+	int listOnly = 0;
+
+	if(strcmp(argv[1], "-l") == 0)
+	{
+		if(argc < 3)
+		{
+			printUsage(argv[0]);
+			exit(-1);
+		}
+		listOnly = 1;
+	}
+
+	const char* filename = listOnly ? argv[2] : argv[1];
+
 	/* Open the pak file */
-	fd = fopen(argv[1], "r");
+	fd = fopen(filename, "r");
 	if (fd == NULL)
 	{
 		perror("Could not open the pak file");
@@ -231,15 +309,18 @@ main(int argc, char *argv[])
 	}
 
 	/* Read the directory */
-	d = read_directory(fd);
+	d = read_directory(fd, listOnly);
 	if (d == NULL)
 	{
 		fclose(fd);
 		exit(-1);
 	}
 
-	/* And now extract the files */
-	extract_files(fd, d);
+	if(!listOnly)
+	{
+		/* And now extract the files */
+		extract_files(fd, d);
+	}
 
 	/* cleanup */
 	fclose(fd);
