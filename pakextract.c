@@ -178,10 +178,99 @@ read_directory(FILE *fd, int listOnly)
 
 static void extract_compressed(FILE* in, directory *d)
 {
+	FILE *out;
+	int offset;
+	int read;
+	int written;
+	int x;
+	int num;
+	unsigned char *in_buf;
+	unsigned char *out_buf;
 
-	// TODO: implement according to https://gist.github.com/DanielGibson/8bde6241c93e5efe8b75e5e00d0b9858
-	fprintf(stderr, "## TODO: Implement support for compressed files to extract '%s'!!\n", d->file_name);
+	if ((out = fopen(d->file_name, "w")) == NULL)
+	{
+		perror("Couldn't open outputfile");
+		return;
+	}
 
+	if ((in_buf = malloc(d->compressed_length)) == NULL)
+	{
+		perror("Couldn't allocate memory");
+		return;
+	}
+
+	if ((out_buf = calloc(1, d->file_length)) == NULL)
+	{
+		perror("Couldn't allocate memory");
+		return;
+	}
+
+	fseek(in, d->file_pos, SEEK_SET);
+	fread(in_buf, d->compressed_length, 1, in);
+
+	read = 0;
+	written = 0;
+
+	while (read < d->compressed_length)
+	{
+		x = in_buf[read];
+		++read;
+
+		// x + 1 bytes of uncompressed data
+		if (x < 64)
+		{
+			num = x + 1;
+			memmove(out_buf + written, in_buf + read, num);
+
+			read += num;
+			written += num;
+
+			continue;
+		}
+		// x - 62 zeros
+		else if (x < 128)
+		{
+			num = x - 62;
+			memset(out_buf + written, 0, num);
+
+			written += num;
+
+			continue;
+		}
+		// x - 126 times the next byte
+		else if (x < 192)
+		{
+			num = x - 126;
+			memset(out_buf + written, in_buf[read], num);
+
+			++read;
+			written += num;
+
+			continue;
+		}
+		// Reference previously uncompressed data
+		else if (x < 254)
+		{
+			num = x - 190;
+
+			offset = (int)in_buf[read] + 2;
+			++read;
+
+			memmove(out_buf + written, (out_buf + written) - offset, num);
+			written += num;
+		}
+		// Terminate
+		else if (x == 255)
+		{
+			break;
+		}
+	}
+
+	fwrite(out_buf, d->file_length, 1, out);
+	fclose(out);
+
+	free(in_buf);
+	free(out_buf);
 }
 #endif
 
