@@ -25,11 +25,14 @@
  * SUCH DAMAGE.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <unistd.h> // chdir()
 #include <sys/stat.h>
-#include <errno.h>
+
 
 #include <assert.h>
 
@@ -396,9 +399,10 @@ printUsage(const char* argv0)
 
 	fprintf(stderr, "Extractor for Quake/Quake2 (and compatible) and Daikatana .pak files\n");
 
-	fprintf(stderr, "Usage: %s [-l] [-dk] pakfile\n", argv0);
+	fprintf(stderr, "Usage: %s [-l] [-dk] [-o output dir] pakfile\n", argv0);
 	fprintf(stderr, "       -l     don't extract, just list contents\n");
 	fprintf(stderr, "       -dk    Daikatana pak format (Quake is default)\n");
+	fprintf(stderr, "       -o     directory to extract to\n");
 }
 
 /*
@@ -412,7 +416,7 @@ main(int argc, char *argv[])
 	directory *d = NULL;
 	FILE *fd = NULL;
 	const char* filename = NULL;
-	int listOnly = 0;
+	int list_only = 0;
 	int i = 0;
 	int num_entries = 0;
 
@@ -422,12 +426,25 @@ main(int argc, char *argv[])
 		printUsage(argv[0]);
 		exit(-1);
 	}
+
+	const char* out_dir = NULL;
 	
 	for(i=1; i<argc; ++i)
 	{
 		const char* arg = argv[i];
-		if(strcmp(arg, "-l") == 0) listOnly = 1;
+		if(strcmp(arg, "-l") == 0) list_only = 1;
 		else if(strcmp(arg, "-dk") == 0) dk_pak_mode = 1;
+		else if(strcmp(arg, "-o") == 0)
+		{
+			++i; // go to next argument (should be out_dir)
+			if(i == argc) // no further argument?
+			{
+				fprintf(stderr, "!! -o must be followed by output dir !!\n");
+				printUsage(argv[0]);
+				exit(-1);
+			}
+			out_dir = argv[i];
+		}
 		else
 		{
 			if(filename != NULL) // we already set a filename, wtf
@@ -463,14 +480,23 @@ main(int argc, char *argv[])
 	}
 
 	/* Read the directory */
-	d = read_directory(fd, listOnly, &num_entries);
+	d = read_directory(fd, list_only, &num_entries);
 	if (d == NULL)
 	{
 		fclose(fd);
 		exit(-1);
 	}
 
-	if(!listOnly)
+	if (out_dir != NULL)
+	{
+		if (chdir(out_dir) != 0)
+		{
+			perror("Could not cd to output dir");
+			exit(-1);
+		}
+	}
+
+	if (!list_only)
 	{
 		/* And now extract the files */
 		extract_files(fd, d, num_entries);
