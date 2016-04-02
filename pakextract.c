@@ -29,14 +29,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #include <assert.h>
 
-#ifdef DAIKATANA
-#define HDR_DIR_LEN 72
-#else
-#define HDR_DIR_LEN 64
-#endif
+enum {
+	HDR_DIR_LEN_Q2 = 64,
+	HDR_DIR_LEN_DK = 72
+};
 
 /* Holds the pak header */
 struct
@@ -46,16 +46,19 @@ struct
 	int dir_length;
 } header;
 
+int dk_pak_mode = 0;
+
 /* A directory entry */
 typedef struct
 {
 	char file_name[56];
 	int file_pos;
 	int file_length; // in case of is_compressed: size after decompression
-#ifdef DAIKATANA
+
+	// the following two are only used by daikatana
 	int compressed_length; // size of compressed data in the pak
 	int is_compressed; // 0: uncompressed, else compressed
-#endif
+
 } directory;
  
 /*
@@ -133,9 +136,19 @@ read_header(FILE *fd)
 		return 0;
 	}
 
-	if ((header.dir_length % HDR_DIR_LEN) != 0)
+	int direntry_len = dk_pak_mode ? HDR_DIR_LEN_DK : HDR_DIR_LEN_Q2;
+
+	// Note that this check is not reliable, it could pass and it could still be the wrong kind of pak!
+	if ((header.dir_length % direntry_len) != 0)
 	{
-		fprintf(stderr, "Corrupt pak file\n");
+		const char* curmode = dk_pak_mode ? "Daikatana" : "Quake(2)";
+		const char* othermode = (!dk_pak_mode) ? "Daikatana" : "Quake(2)";
+		fprintf(stderr, "Corrupt pak file - maybe it's not %s format but %s format?\n", curmode, othermode);
+		if(!dk_pak_mode)
+			fprintf(stderr, "If this is a Daikatana .pak file, try adding '-dk' to command-line!\n");
+		else
+			fprintf(stderr, "Are you sure this is a Daikatana .pak file? Try removing '-dk' from command-line!\n");
+		
 		return 0;
 	}
 
@@ -149,10 +162,16 @@ read_dir_entry(directory* entry, FILE* fd)
 	if(fread(&(entry->file_pos), 4, 1, fd) != 1) return 0;
 	if(fread(&(entry->file_length), 4, 1, fd) != 1) return 0;
 
-#ifdef DAIKATANA
-	if(fread(&(entry->compressed_length), 4, 1, fd) != 1) return 0;
-	if(fread(&(entry->is_compressed), 4, 1, fd) != 1) return 0;
-#endif // DAIKATANA
+	if(dk_pak_mode)
+	{
+		if(fread(&(entry->compressed_length), 4, 1, fd) != 1) return 0;
+		if(fread(&(entry->is_compressed), 4, 1, fd) != 1) return 0;
+	}
+	else
+	{
+		entry->compressed_length = 0;
+		entry->is_compressed = 0;
+	}
 
 	// TODO: we could convert the ints to platform endianess now
 
@@ -171,16 +190,22 @@ static directory *
 read_directory(FILE *fd, int listOnly, int* num_entries)
 {
 	int i;
-	int num_dir_entries = header.dir_length / HDR_DIR_LEN;
+	int direntry_len = dk_pak_mode ? HDR_DIR_LEN_DK : HDR_DIR_LEN_Q2;
+	int num_dir_entries = header.dir_length / direntry_len;
 	directory* dir = calloc(num_dir_entries, sizeof(directory));
-	directory* cur = NULL;
+
+	if(dir == NULL)
+	{
+		perror("Couldn't allocate memory");
+		return NULL;
+	}
 
 	/* Navigate to the directory */
 	fseek(fd, header.dir_offset, SEEK_SET);
 
 	for (i = 0; i < num_dir_entries; ++i)
 	{
-		cur = &dir[i];
+		directory* cur = &dir[i];
 		
 		if (!read_dir_entry(cur, fd))
 		{
@@ -193,9 +218,10 @@ read_directory(FILE *fd, int listOnly, int* num_entries)
 		if(listOnly)
 		{
 			printf("%s (%d bytes", cur->file_name, cur->file_length);
-		#ifdef DAIKATANA
-			if(cur->is_compressed) printf(", %d compressed", cur->compressed_length);
-		#endif
+			
+			if(dk_pak_mode && cur->is_compressed)
+				printf(", %d compressed", cur->compressed_length);
+			
 			printf(")\n");
 		}
 	}
@@ -203,8 +229,6 @@ read_directory(FILE *fd, int listOnly, int* num_entries)
 	*num_entries = num_dir_entries;
 	return dir;
 }
-
-#ifdef DAIKATANA
 
 static void
 extract_compressed(FILE* in, directory *d)
@@ -303,7 +327,6 @@ extract_compressed(FILE* in, directory *d)
 	free(in_buf);
 	free(out_buf);
 }
-#endif
 
 static void
 extract_raw(FILE* in, directory *d)
@@ -355,13 +378,12 @@ extract_files(FILE *fd, directory *dirs, int num_entries)
 		directory* d = &dirs[i];
 	    mktree(d->file_name);
 
-#ifdef DAIKATANA
 		if(d->is_compressed)
 		{
+			assert(dk_pak_mode != 0 && "Only Daikatana paks contain compressed files!");
 			extract_compressed(fd, d);
 		}
 		else
-#endif
 		{
 			extract_raw(fd, d);
 		}
@@ -371,13 +393,12 @@ extract_files(FILE *fd, directory *dirs, int num_entries)
 static void
 printUsage(const char* argv0)
 {
-#ifdef DAIKATANA
-	fprintf(stderr, "Extractor for Daikatana .pak files\n");
-#else
-	fprintf(stderr, "Extractor for Quake/Quake2 (and compatible) .pak files\n");
-#endif
-	fprintf(stderr, "Usage: %s [-l] pakfile\n", argv0);
-	fprintf(stderr, "       -l don't extract, just list contents\n");
+
+	fprintf(stderr, "Extractor for Quake/Quake2 (and compatible) and Daikatana .pak files\n");
+
+	fprintf(stderr, "Usage: %s [-l] [-dk] pakfile\n", argv0);
+	fprintf(stderr, "       -l     don't extract, just list contents\n");
+	fprintf(stderr, "       -dk    Daikatana pak format (Quake is default)\n");
 }
 
 /*
@@ -388,8 +409,12 @@ printUsage(const char* argv0)
 int
 main(int argc, char *argv[])
 {
-	directory *d;
-	FILE *fd;
+	directory *d = NULL;
+	FILE *fd = NULL;
+	const char* filename = NULL;
+	int listOnly = 0;
+	int i = 0;
+	int num_entries = 0;
 
 	/* Correct usage? */
 	if (argc < 2)
@@ -397,26 +422,36 @@ main(int argc, char *argv[])
 		printUsage(argv[0]);
 		exit(-1);
 	}
-
-	int listOnly = 0;
-
-	if(strcmp(argv[1], "-l") == 0)
+	
+	for(i=1; i<argc; ++i)
 	{
-		if(argc < 3)
+		const char* arg = argv[i];
+		if(strcmp(arg, "-l") == 0) listOnly = 1;
+		else if(strcmp(arg, "-dk") == 0) dk_pak_mode = 1;
+		else
 		{
-			printUsage(argv[0]);
-			exit(-1);
+			if(filename != NULL) // we already set a filename, wtf
+			{
+				fprintf(stderr, "!! Illegal argument '%s' (or too many filenames) !!\n", arg);
+				printUsage(argv[0]);
+				exit(-1);
+			}
+			filename = arg;
 		}
-		listOnly = 1;
 	}
 
-	const char* filename = listOnly ? argv[2] : argv[1];
+	if(filename == NULL)
+	{
+		fprintf(stderr, "!! No filename given !!\n");
+		printUsage(argv[0]);
+		exit(-1);
+	}
 
 	/* Open the pak file */
 	fd = fopen(filename, "r");
 	if (fd == NULL)
 	{
-		perror("Could not open the pak file");
+		fprintf(stderr, "Could not open the pak file '%s': %s\n", filename, strerror(errno));
 		exit(-1);
 	}
 
@@ -428,7 +463,6 @@ main(int argc, char *argv[])
 	}
 
 	/* Read the directory */
-	int num_entries;
 	d = read_directory(fd, listOnly, &num_entries);
 	if (d == NULL)
 	{

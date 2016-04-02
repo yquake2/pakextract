@@ -4,7 +4,7 @@ CC := clang
 # ----------
 
 # Base CFLAGS
-CFLAGS := -O2 -Wall -std=gnu11 -pedantic -DDAIKATANA
+CFLAGS := -O2 -Wall -std=gnu11 -pedantic
 
 # ----------
 
