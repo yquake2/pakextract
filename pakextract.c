@@ -422,7 +422,7 @@ main(int argc, char *argv[])
 		else if(strcmp(arg, "-o") == 0)
 		{
 			++i; // go to next argument (should be out_dir)
-			if(i == argc) // no further argument?
+			if(i == argc || argv[i][0] == '-') // no further argument/next argument option?
 			{
 				fprintf(stderr, "!! -o must be followed by output dir !!\n");
 				printUsage(argv[0]);
