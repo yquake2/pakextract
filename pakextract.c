@@ -237,13 +237,6 @@ static void
 extract_compressed(FILE* in, directory *d)
 {
 	FILE *out;
-	int offset;
-	int read;
-	int written;
-	int x;
-	int num;
-	unsigned char *in_buf;
-	unsigned char *out_buf;
 
 	if ((out = fopen(d->file_name, "w")) == NULL)
 	{
@@ -251,11 +244,15 @@ extract_compressed(FILE* in, directory *d)
 		return;
 	}
 
+	unsigned char *in_buf;
+
 	if ((in_buf = malloc(d->compressed_length)) == NULL)
 	{
 		perror("Couldn't allocate memory");
 		return;
 	}
+
+	unsigned char *out_buf;
 
 	if ((out_buf = calloc(1, d->file_length)) == NULL)
 	{
@@ -266,56 +263,44 @@ extract_compressed(FILE* in, directory *d)
 	fseek(in, d->file_pos, SEEK_SET);
 	fread(in_buf, d->compressed_length, 1, in);
 
-	read = 0;
-	written = 0;
+	int read = 0;
+	int written = 0;
 
 	while (read < d->compressed_length)
 	{
-		x = in_buf[read];
+		unsigned char x = in_buf[read];
 		++read;
 
 		// x + 1 bytes of uncompressed data
 		if (x < 64)
 		{
-			num = x + 1;
-			memmove(out_buf + written, in_buf + read, num);
+			memmove(out_buf + written, in_buf + read, x + 1);
 
-			read += num;
-			written += num;
-
-			continue;
+			read += x + 1;
+			written += x + 1;
 		}
 		// x - 62 zeros
 		else if (x < 128)
 		{
-			num = x - 62;
-			memset(out_buf + written, 0, num);
+			memset(out_buf + written, 0, x - 62);
 
-			written += num;
-
-			continue;
+			written += x - 62;
 		}
 		// x - 126 times the next byte
 		else if (x < 192)
 		{
-			num = x - 126;
-			memset(out_buf + written, in_buf[read], num);
+			memset(out_buf + written, in_buf[read], x - 126);
 
 			++read;
-			written += num;
-
-			continue;
+			written += x - 126;
 		}
 		// Reference previously uncompressed data
 		else if (x < 254)
 		{
-			num = x - 190;
+			memmove(out_buf + written, (out_buf + written) - ((int)in_buf[read] + 2), x - 190);
 
-			offset = (int)in_buf[read] + 2;
 			++read;
-
-			memmove(out_buf + written, (out_buf + written) - offset, num);
-			written += num;
+			written += x - 190;
 		}
 		// Terminate
 		else if (x == 255)
