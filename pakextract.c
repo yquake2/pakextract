@@ -47,7 +47,7 @@ struct
 } header;
 
 /* A directory entry */
-struct directory_s
+typedef struct
 {
 	char file_name[56];
 	int file_pos;
@@ -56,9 +56,7 @@ struct directory_s
 	int compressed_length; // size of compressed data in the pak
 	int is_compressed; // 0: uncompressed, else compressed
 #endif
-	struct directory_s *next;
-};
-typedef struct directory_s directory;
+} directory;
  
 /*
  * Creates a directory tree.
@@ -67,7 +65,7 @@ typedef struct directory_s directory;
  *        part (the file itself) is
  *        ommitted
  */
-void
+static void
 mktree(char *s)
 {
 	char *dir;
@@ -106,28 +104,59 @@ mktree(char *s)
  *  *fd -> A file descriptor holding
  *         the pack to be read.
  */
-int
+static int
 read_header(FILE *fd)
 {
-    if (fread(&header, sizeof(header), 1, fd) != 1)
+	if (fread(header.signature, 4, 1, fd) != 1)
 	{
 		perror("Could not read the pak file header");
-		return -1;
+		return 0;
 	}
 
-	if (strncmp(header.signature, "PACK", 4))
+	if (fread(&header.dir_offset, 4, 1, fd) != 1)
+	{
+		perror("Could not read the pak file header");
+		return 0;
+	}
+
+	if (fread(&header.dir_length, 4, 1, fd) != 1)
+	{
+		perror("Could not read the pak file header");
+		return 0;
+	}
+
+	// TODO: we could convert the ints to platform endianess now
+
+	if (strncmp(header.signature, "PACK", 4) != 0)
 	{
 		fprintf(stderr, "Not a pak file\n");
-		return -1;
+		return 0;
 	}
 
 	if ((header.dir_length % HDR_DIR_LEN) != 0)
 	{
 		fprintf(stderr, "Corrupt pak file\n");
-		return -1;
+		return 0;
 	}
 
-	return 0;
+	return 1;
+}
+
+static int
+read_dir_entry(directory* entry, FILE* fd)
+{
+	if(fread(entry->file_name, 56, 1, fd) != 1) return 0;
+	if(fread(&(entry->file_pos), 4, 1, fd) != 1) return 0;
+	if(fread(&(entry->file_length), 4, 1, fd) != 1) return 0;
+
+#ifdef DAIKATANA
+	if(fread(&(entry->compressed_length), 4, 1, fd) != 1) return 0;
+	if(fread(&(entry->is_compressed), 4, 1, fd) != 1) return 0;
+#endif // DAIKATANA
+
+	// TODO: we could convert the ints to platform endianess now
+
+	return 1;
 }
 
 /*
@@ -138,24 +167,26 @@ read_header(FILE *fd)
  *  *fd -> a file descriptor holding
  *         holding the pak to be read
  */ 
-directory *
-read_directory(FILE *fd, int listOnly)
+static directory *
+read_directory(FILE *fd, int listOnly, int* num_entries)
 {
 	int i;
-	directory *head, *cur;
-
-	head = NULL;
+	int num_dir_entries = header.dir_length / HDR_DIR_LEN;
+	directory* dir = calloc(num_dir_entries, sizeof(directory));
+	directory* cur = NULL;
 
 	/* Navigate to the directory */
 	fseek(fd, header.dir_offset, SEEK_SET);
 
-	for (i = 0; i < (header.dir_length / HDR_DIR_LEN); i++)
+	for (i = 0; i < num_dir_entries; ++i)
 	{
-		cur = malloc(sizeof(directory));
-
-		if (fread(cur, HDR_DIR_LEN, 1, fd) != 1)
+		cur = &dir[i];
+		
+		if (!read_dir_entry(cur, fd))
 		{
 			perror("Could not read directory entry");
+			*num_entries = 0;
+			free(dir);
 			return NULL;
 		}
 
@@ -167,17 +198,16 @@ read_directory(FILE *fd, int listOnly)
 		#endif
 			printf(")\n");
 		}
-		
-		cur->next = head;
-		head = cur;
 	}
 
-	return head;
+	*num_entries = num_dir_entries;
+	return dir;
 }
 
 #ifdef DAIKATANA
 
-static void extract_compressed(FILE* in, directory *d)
+static void
+extract_compressed(FILE* in, directory *d)
 {
 	FILE *out;
 	int offset;
@@ -275,7 +305,8 @@ static void extract_compressed(FILE* in, directory *d)
 }
 #endif
 
-static void extract_raw(FILE* in, directory *d)
+static void
+extract_raw(FILE* in, directory *d)
 {
 	FILE* out = fopen(d->file_name, "w");
 	if (out == NULL)
@@ -314,13 +345,14 @@ static void extract_raw(FILE* in, directory *d)
  *  *fd -> a file descriptor holding
  *         the pak to be extracted
  */
-void
-extract_files(FILE *fd, directory *d)
+static void
+extract_files(FILE *fd, directory *dirs, int num_entries)
 {
-	directory *old_d;
+	int i;
 
-	while (d != NULL)
+	for(i=0; i<num_entries; ++i)
 	{
+		directory* d = &dirs[i];
 	    mktree(d->file_name);
 
 #ifdef DAIKATANA
@@ -333,14 +365,11 @@ extract_files(FILE *fd, directory *d)
 		{
 			extract_raw(fd, d);
 		}
-
-		old_d = d;
-		d = d->next;
-		free(old_d);
 	}
 }
 
-static void printUsage(const char* argv0)
+static void
+printUsage(const char* argv0)
 {
 #ifdef DAIKATANA
 	fprintf(stderr, "Extractor for Daikatana .pak files\n");
@@ -392,14 +421,15 @@ main(int argc, char *argv[])
 	}
 
 	/* Read the header */
-    if (read_header(fd) < 0)
+    if (!read_header(fd))
 	{
 		fclose(fd);
 		exit(-1);
 	}
 
 	/* Read the directory */
-	d = read_directory(fd, listOnly);
+	int num_entries;
+	d = read_directory(fd, listOnly, &num_entries);
 	if (d == NULL)
 	{
 		fclose(fd);
@@ -409,11 +439,13 @@ main(int argc, char *argv[])
 	if(!listOnly)
 	{
 		/* And now extract the files */
-		extract_files(fd, d);
+		extract_files(fd, d, num_entries);
 	}
 
 	/* cleanup */
 	fclose(fd);
+
+	free(d);
 
 	return 0;
 }
