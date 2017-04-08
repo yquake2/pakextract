@@ -29,6 +29,8 @@ following order:
    in bytes. Since every directory entry is 64 bytes 
    long this value modulo 64 must be 0: 
      (dir_length % 64) == 0;
+   Also this means that the number of directory entries
+   can be calculated with dir_length / 64
 
 The directory can be anywere in the file but most times
 it's written to the end. In consists of datablocks, 
@@ -41,6 +43,21 @@ in the following order:
  - A 4 byte integer giving the length of the file
    in bytes.
 
+------------------------------------------------------
+
+            The Sin Pak File Format (.sin)
+            ------------------------------
+
+It's very similar to the Quake II format, there are only
+small differences:
+ - The header on the start of the file starts with "SPAK"
+   instead of "PACK"
+ - The filename in the directory entry is 120 bytes long
+   => a directory entry is 128 bytes long instead of 64
+   => the number of directory entries is dir_length / 128
+      instead of dir_length / 64
+
+
 -------------------------------------------------------
 
             The Daikatana Pak File Format
@@ -51,7 +68,7 @@ additionally supports compressing files within the pak.
 Daikatana only did that for .tga .bmp .wal .pcx and .bsp files and might
 expect other files to be uncompressed (in case you want to write a compressor).
 
-In Daikatana directory entries are 72 bytes long, because they have to
+In Daikatana directory entries are 72 bytes long, because they have two
 additional 4byte integer fields at the end:
  - A 4 byte integer giving the compressed length of the file in bytes,
    if it is compressed.

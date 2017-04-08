@@ -1,6 +1,6 @@
 /*-
  * Copyright (c) 2012-2016 Yamagi Burmeister
- *               2015-2016 Daniel Gibson
+ *               2015-2017 Daniel Gibson
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,14 +31,38 @@
 #include <string.h>
 
 #include <unistd.h> // chdir()
-#include <sys/stat.h>
+#include <sys/stat.h> // mkdir()
 
 
 #include <assert.h>
 
+
 enum {
-	HDR_DIR_LEN_Q2 = 64,
-	HDR_DIR_LEN_DK = 72
+	PAK_MODE_Q2, // standard Quake/Quake2 pak
+	PAK_MODE_SIN,
+	PAK_MODE_DK,
+	
+	_NUM_PAK_MODES
+};
+
+static int pak_mode = PAK_MODE_Q2;
+
+static const char* PAK_MODE_NAMES[_NUM_PAK_MODES] = {
+	"Quake(2)",  // PAK_MODE_Q2
+	"Sin",       // PAK_MODE_SIN
+	"Daikatana", // PAK_MODE_DK
+};
+
+static const int HDR_LEN[_NUM_PAK_MODES] = {
+	64,  // PAK_MODE_Q2
+	128, // PAK_MODE_SIN
+	72,  // PAK_MODE_DK
+};
+
+static const int DIR_FILENAME_LEN[_NUM_PAK_MODES] = {
+	56,  // PAK_MODE_Q2
+	120, // PAK_MODE_SIN
+	56,  // PAK_MODE_DK
 };
 
 /* Holds the pak header */
@@ -49,12 +73,11 @@ struct
 	int dir_length;
 } header;
 
-int dk_pak_mode = 0;
 
 /* A directory entry */
 typedef struct
 {
-	char file_name[56];
+	char file_name[120];
 	int file_pos;
 	int file_length; // in case of is_compressed: size after decompression
 
@@ -72,34 +95,24 @@ typedef struct
  *        ommitted
  */
 static void
-mktree(char *s)
+mktree(const char *s)
 {
-	char *dir;
-	char *elements[28];
-	char *path;
-	char *token;
-	int i, j;
+	char dir[128] = {0};
+	int i;
+	int sLen = strlen(s);
 
-	path = calloc(56, sizeof(char));
-	dir = malloc(sizeof(char) * 56);
-
-	strncpy(dir, s, sizeof(char) * 56);
-
-	for (i = 0; (token = strsep(&dir, "/")) != NULL; i++)
+	strncpy(dir, s, sizeof(dir)-1);
+	
+	for(i=1; i<sLen; ++i)
 	{
-		elements[i] = token;
+		if(dir[i] == '/')
+		{
+			dir[i] = '\0'; // this ends the string at this point and allows creating the directory up to here
+			mkdir(dir, 0700);
+			
+			dir[i] = '/'; // restore the / so we can can go on to create next directory
+		}
 	}
-
-	for (j = 0; j < i - 1; j++)
-	{
-		strcat(path, elements[j]);
-		strcat(path, "/");
-
-		mkdir(path, 0700);
-	}
-
-	free(path);
-	free(dir);
 }
 
 /*
@@ -133,21 +146,25 @@ read_header(FILE *fd)
 
 	// TODO: we could convert the ints to platform endianess now
 
-	if (strncmp(header.signature, "PACK", 4) != 0)
+	if (strncmp(header.signature, "SPAK", 4) == 0)
+	{
+		pak_mode = PAK_MODE_SIN;
+	}
+	else if (strncmp(header.signature, "PACK", 4) != 0)
 	{
 		fprintf(stderr, "Not a pak file\n");
 		return 0;
 	}
 
-	int direntry_len = dk_pak_mode ? HDR_DIR_LEN_DK : HDR_DIR_LEN_Q2;
+	int direntry_len = HDR_LEN[pak_mode];
 
 	// Note that this check is not reliable, it could pass and it could still be the wrong kind of pak!
 	if ((header.dir_length % direntry_len) != 0)
 	{
-		const char* curmode = dk_pak_mode ? "Daikatana" : "Quake(2)";
-		const char* othermode = (!dk_pak_mode) ? "Daikatana" : "Quake(2)";
+		const char* curmode = PAK_MODE_NAMES[pak_mode];
+		const char* othermode = (pak_mode != PAK_MODE_DK) ? "Daikatana" : "Quake(2)";
 		fprintf(stderr, "Corrupt pak file - maybe it's not %s format but %s format?\n", curmode, othermode);
-		if(!dk_pak_mode)
+		if(pak_mode != PAK_MODE_DK)
 			fprintf(stderr, "If this is a Daikatana .pak file, try adding '-dk' to command-line!\n");
 		else
 			fprintf(stderr, "Are you sure this is a Daikatana .pak file? Try removing '-dk' from command-line!\n");
@@ -161,11 +178,11 @@ read_header(FILE *fd)
 static int
 read_dir_entry(directory* entry, FILE* fd)
 {
-	if(fread(entry->file_name, 56, 1, fd) != 1) return 0;
+	if(fread(entry->file_name, DIR_FILENAME_LEN[pak_mode], 1, fd) != 1) return 0;
 	if(fread(&(entry->file_pos), 4, 1, fd) != 1) return 0;
 	if(fread(&(entry->file_length), 4, 1, fd) != 1) return 0;
 
-	if(dk_pak_mode)
+	if(pak_mode == PAK_MODE_DK)
 	{
 		if(fread(&(entry->compressed_length), 4, 1, fd) != 1) return 0;
 		if(fread(&(entry->is_compressed), 4, 1, fd) != 1) return 0;
@@ -193,7 +210,7 @@ static directory *
 read_directory(FILE *fd, int listOnly, int* num_entries)
 {
 	int i;
-	int direntry_len = dk_pak_mode ? HDR_DIR_LEN_DK : HDR_DIR_LEN_Q2;
+	int direntry_len = HDR_LEN[pak_mode];
 	int num_dir_entries = header.dir_length / direntry_len;
 	directory* dir = calloc(num_dir_entries, sizeof(directory));
 
@@ -222,7 +239,7 @@ read_directory(FILE *fd, int listOnly, int* num_entries)
 		{
 			printf("%s (%d bytes", cur->file_name, cur->file_length);
 			
-			if(dk_pak_mode && cur->is_compressed)
+			if((pak_mode == PAK_MODE_DK) && cur->is_compressed)
 				printf(", %d compressed", cur->compressed_length);
 			
 			printf(")\n");
@@ -368,7 +385,7 @@ extract_files(FILE *fd, directory *dirs, int num_entries)
 
 		if(d->is_compressed)
 		{
-			assert(dk_pak_mode != 0 && "Only Daikatana paks contain compressed files!");
+			assert((pak_mode == PAK_MODE_DK) && "Only Daikatana paks contain compressed files!");
 			extract_compressed(fd, d);
 		}
 		else
@@ -382,19 +399,14 @@ static void
 printUsage(const char* argv0)
 {
 
-	fprintf(stderr, "Extractor for Quake/Quake2 (and compatible) and Daikatana .pak files\n");
+	fprintf(stderr, "Extractor for Quake/Quake2 (and compatible) and Daikatana .pak and Sin .sin files\n");
 
 	fprintf(stderr, "Usage: %s [-l] [-dk] [-o output dir] pakfile\n", argv0);
 	fprintf(stderr, "       -l     don't extract, just list contents\n");
-	fprintf(stderr, "       -dk    Daikatana pak format (Quake is default)\n");
+	fprintf(stderr, "       -dk    Daikatana pak format (Quake is default, Sin is detected automatically)\n");
 	fprintf(stderr, "       -o     directory to extract to\n");
 }
 
-/*
- * A small programm to extract a Quake II pak file.
- * The pak file is given as the first an only 
- * argument.
- */
 int
 main(int argc, char *argv[])
 {
@@ -418,7 +430,7 @@ main(int argc, char *argv[])
 	{
 		const char* arg = argv[i];
 		if(strcmp(arg, "-l") == 0) list_only = 1;
-		else if(strcmp(arg, "-dk") == 0) dk_pak_mode = 1;
+		else if(strcmp(arg, "-dk") == 0) pak_mode = PAK_MODE_DK;
 		else if(strcmp(arg, "-o") == 0)
 		{
 			++i; // go to next argument (should be out_dir)
