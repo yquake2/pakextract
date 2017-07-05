@@ -1,13 +1,24 @@
                       pakextract
                       ----------
 
-pakextract is a small tool to extract the contents of 
-a Quake II pak file into the current directory. Usage:
+pakextract is a small tool to extract or list the contents 
+of a Quake/Quake II or Daikatana pak file or Sin .sin file
+into the current directory. Usage:
  
- ./pakextract /path/to/pakfile.pak
+Usage: pakextract [-l] [-dk] [-o output dir] pakfile
+   -l     don't extract, just list contents
+   -dk    Daikatana pak format (Quake is default,
+            Sin is detected automatically)
+   -o     directory to extract to (default is $PWD)
 
-Only Quake II paks are supported. Other pak formats may
-work but it's untested and unsupported.
+Examples:
+  ./pakextract /path/to/pakfile.pak
+  ./pakextract -o /path/to/output_dir /path/to/pakfile.sin
+  ./pakextract -l -dk /path/to/daikatana_pakfile.pak
+
+Only Archives from Quake, Quake II, Daikatana and Sin
+are supported. Other pak formats may work but it's
+untested and unsupported.
 
 -------------------------------------------------------
 
